@@ -1,0 +1,174 @@
+(*SAKMS scheme security proof in proverif*)
+
+(*defination for code*)
+(*----- channel ----*)
+free c: channel.  (*public channel *)
+free cp:channel[private].(*secure channel*)
+(*Constants and Variables*)
+const IDA:bitstring.    (*ID of DeviceA*)
+const IDB:bitstring.    (*ID of DeviceB*)
+
+type point.
+type cert.
+type key.
+
+const G:point.
+free dA:bitstring[private].
+free dB:bitstring[private].
+free checkvalue1:bitstring[private].
+
+(*Functions*)
+fun hash(bitstring):bitstring.
+fun change(point):bitstring.
+reduc forall aa:point; ichange(change(aa))=aa.
+fun cechange(cert):bitstring.
+reduc forall bb:cert; icechange(cechange(bb))=bb.
+(*functions for joint*)
+fun joint(point,bitstring):bitstring.
+reduc forall a:point, b:bitstring; i_joint(joint(a,b))=(a,b).
+(*functions for XOR*)
+fun xor(bitstring,bitstring):bitstring.
+reduc forall a:bitstring, b:bitstring; i_xor(xor(a,b),b)=a.
+(*functions for point add*)
+fun eccadd(point,point):point.
+(*functions for ECQV*)
+fun eccmuti(bitstring,point):point.
+fun GP(point,bitstring,point):point.
+fun Gcert(point,bitstring):cert.
+fun Gw(cert,bitstring,bitstring):bitstring.
+fun Gd(cert,bitstring,bitstring):bitstring.
+reduc forall x:bitstring, y:bitstring, z:bitstring, u:bitstring, g:point;
+CheckQ(eccmuti(Gd(Gcert(GP(eccmuti(x,g),y,g),u),x,Gw(Gcert(GP(eccmuti(x,g),y,g),u),y,z)),g),Gcert(GP(eccmuti(x,g),y,g),u),GP(eccmuti(x,g),y,g),eccmuti(z,g))=true.
+reduc forall x:bitstring, y:bitstring, u:bitstring, g:point;
+CheckCert(GP(eccmuti(x,g),y,g),u,Gcert(GP(eccmuti(x,g),y,g),u))=true.
+(*equation for ECDH*)
+equation forall m:bitstring, n:bitstring; eccmuti(m,eccmuti(n,G))=eccmuti(n,eccmuti(m,G)).
+(*equation for Point add*)
+equation forall a:point, b:point; eccadd(a,b)=eccadd(b,a).
+(*function for AES Encryption*)
+fun enc(bitstring,key):bitstring.
+reduc forall m:bitstring, k:key; dec(enc(m,k),k)=m.
+(*function for key generate*)
+fun keygen(point,bitstring,bitstring):key.
+
+
+(*Events*)
+event begin_rigi_A(bitstring).
+event end_rigi_A(bitstring).
+event begin_rigi_B(bitstring).
+event end_rigi_B(bitstring).
+
+event begin_auth_A(point,point,cert,bitstring).
+event end_auth_A(key).
+event begin_auth_B(point,point,cert,bitstring).
+event end_auth_B(key).
+(*Attack Model*)
+
+query attacker(dA).
+query attacker(dB).
+query attacker(checkvalue1).
+query v:bitstring; event(end_rigi_A(v)) ==> event(begin_rigi_A(v)).
+query j:bitstring; event(end_rigi_B(j)) ==> event(begin_rigi_B(j)).
+
+query x:point, y:point, z:cert, m:bitstring, k:key; inj-event(end_auth_B(k)) ==> inj-event(begin_auth_A(x,y,z,m)).
+query x:point, y:point, z:cert, m:bitstring, k:key; inj-event(end_auth_A(k)) ==> inj-event(begin_auth_B(x,y,z,m)).
+(*Process Device A*)
+
+let deviceA(QCA: point) =
+new rA: bitstring;
+let RA=eccmuti(rA,G) in
+out(cp,(RA,IDA,hash((change(RA),IDA))));
+
+in(c,(XPA:point,XCertA:cert,XwA:bitstring,m1:bitstring));
+let m11=hash((change(XPA),cechange(XCertA),XwA)) in
+if m11=m1 then
+let dA=Gd(XCertA,rA,XwA) in
+let QA=eccmuti(dA,G) in
+if CheckCert(XPA,IDA,XCertA) then
+if CheckQ(QA,XCertA,XPA,QCA) then
+event end_rigi_A(IDA);
+
+in(c,(QB:point));
+new nonceA:bitstring;
+let T=xor(joint(QA,nonceA),hash((RA,eccmuti(rA,QB)))) in
+out(c,(RA,XPA,XCertA,T,hash((change(RA),change(XPA),cechange(XCertA),T,change(QA),nonceA))));
+
+in(c,(XRB:point,XXPB:point,XXCertB:cert,XnonceB:bitstring,m4:bitstring));
+if CheckCert(XXPB,IDB,XXCertB) then
+if CheckQ(QB,XXCertB,XXPB,QCA) then
+event begin_auth_B(XRB,XXPB,XXCertB,XnonceB);
+let sharekey=eccadd(eccmuti(rA,QB),eccmuti(dA,XRB)) in
+let m41=hash((change(sharekey),change(XRB),change(XXPB),cechange(XXCertB),XnonceB)) in
+if m41=m4 then
+let lk=keygen(sharekey,nonceA,XnonceB) in
+out(c,(enc(checkvalue1,lk)));
+event end_auth_A(lk).
+
+
+
+(*Process Device B*)
+
+let deviceB(QCA: point) =
+new rB: bitstring;
+let RB=eccmuti(rB,G) in
+out(cp,(RB,IDB,hash((change(RB),IDB))));
+
+in(c,(XPB:point,XCertB:cert,XwB:bitstring,m3:bitstring));
+let m31=hash((change(XPB),cechange(XCertB),XwB)) in
+if m31=m3 then
+let dB=Gd(XCertB,rB,XwB) in
+let QB=eccmuti(dB,G) in
+if CheckCert(XPB,IDB,XCertB) then
+if CheckQ(QB,XCertB,XPB,QCA) then
+event end_rigi_B(IDB);
+
+out(c,(QB));
+in(c,(XRA:point,XXPA:point,XXCertA:cert,XT:bitstring,m5:bitstring));
+let aa=i_xor(XT,hash((XRA,eccmuti(dB,XRA)))) in
+let (XQA:point,XnonceA:bitstring)=i_joint(aa) in
+let m51=hash((change(XRA),change(XXPA),cechange(XXCertA),XT,change(XQA),XnonceA)) in
+if m51=m5 then
+if CheckCert(XXPA,IDA,XXCertA) then
+if CheckQ(XQA,XXCertA,XXPA,QCA) then
+event begin_auth_A(XRA,XXPA,XXCertA,XT);
+new nonceB: bitstring;
+let sharekey=eccadd(eccmuti(dB,XRA),eccmuti(rB,XQA)) in
+let lk=keygen(sharekey,XnonceA,nonceB) in
+out(c,(RB,XPB,XCertB,nonceB,hash((change(sharekey),change(RB),change(XPB),cechange(XCertB),nonceB))));
+event end_auth_B(lk).
+
+
+(*Process CA*)
+
+let ArigiCA(dCA: bitstring, QCA: point)=
+in(cp,(XRX:point,XIDA:bitstring,m2:bitstring));
+new rCA:bitstring;
+let m21=hash((change(XRX),XIDA)) in
+if m21=m2 then
+event begin_rigi_A(IDA);
+let PX=GP(XRX,rCA,G) in
+let CertX=Gcert(PX,IDA) in
+let wX=Gw(CertX,rCA,dCA) in
+out(c,(PX,CertX,wX,hash((change(PX),cechange(CertX),wX)))).
+
+let BrigiCA(dCA: bitstring, QCA: point)=
+in(cp,(XRX:point,XIDB:bitstring,m2:bitstring));
+new rCA:bitstring; 
+event begin_rigi_B(IDB);
+let m21=hash((change(XRX),XIDB)) in
+if m21=m2 then
+let PX=GP(XRX,rCA,G) in
+let CertX=Gcert(PX,IDB) in
+let wX=Gw(CertX,rCA,dCA) in
+out(c,(PX,CertX,wX,hash((change(PX),cechange(CertX),wX)))).
+
+(*main process*)
+
+process
+
+new dCA: bitstring;
+let QCA=eccmuti(dCA,G) in
+out(c,QCA);
+(!deviceA(QCA))|(!deviceB(QCA))|(!ArigiCA(dCA,QCA))|(!BrigiCA(dCA,QCA))
+
+
